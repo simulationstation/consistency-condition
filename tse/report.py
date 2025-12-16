@@ -15,12 +15,14 @@ from .experiments import (
     ConvergenceResult,
     HeatmapResult,
     EpsilonSweepResult,
+    ScenarioDiagnostics,
 )
 
 
 def generate_report(convergence_results: dict[str, ConvergenceResult],
                     heatmap_result: Optional[HeatmapResult],
                     epsilon_results: Optional[list[EpsilonSweepResult]],
+                    scenario_diagnostics: Optional[dict[str, ScenarioDiagnostics]],
                     params: TSEParameters,
                     outdir: Path) -> str:
     """Generate the full markdown report.
@@ -61,6 +63,8 @@ def generate_report(convergence_results: dict[str, ConvergenceResult],
     report.append("")
     report.append("The integrand scales as $(1+t)^{-\\beta}$ where $\\beta = 1 + \\varepsilon + \\gamma_n + \\gamma_{sv} + \\gamma_P$.")
     report.append("")
+    report.append("Total capacity is always positive for positive integrand prefactors; terminality is therefore diagnosed using late-time window capacity rather than total capacity.")
+    report.append("")
 
     # Parameters
     report.append("## Parameters Used")
@@ -93,19 +97,15 @@ def generate_report(convergence_results: dict[str, ConvergenceResult],
     report.append("")
     report.append("### Scenario Capacity Values")
     report.append("")
-    report.append("| Scenario | Final $C$ | Converged? | Classification |")
-    report.append("|----------|-----------|------------|----------------|")
+    report.append("| Scenario | Total $C$ | $C_{win}$ (last median) | Status |")
+    report.append("|----------|-----------|-------------------------|--------|")
 
     for name, result in convergence_results.items():
-        C = result.final_capacity
-        conv = "Yes" if result.converged else "No"
-        if C < 1e-12:
-            classification = "Terminal ($C \\to 0$)"
-        elif C < 1e-6:
-            classification = "Near-terminal"
-        else:
-            classification = "Nonterminal ($C > 0$)"
-        report.append(f"| {name} | {C:.3e} | {conv} | {classification} |")
+        diag = scenario_diagnostics.get(name) if scenario_diagnostics else None
+        total_C = diag.capacity_total if diag else result.final_capacity
+        window_med = diag.capacity_window_last_median if diag else float('nan')
+        status = diag.status if diag else ("Nonterminal" if result.final_capacity >= 1e-12 else "Terminal")
+        report.append(f"| {name} | {total_C:.3e} | {window_med:.3e} | {status} |")
     report.append("")
 
     # Convergence analysis
@@ -179,6 +179,9 @@ def generate_report(convergence_results: dict[str, ConvergenceResult],
     report.append("|----------|-------------|")
     for name in convergence_results:
         report.append(f"| `capacity_vs_tmax_{name}.png` | Convergence of $C$ with $t_{{max}}$ for {name} |")
+        if scenario_diagnostics and name in scenario_diagnostics:
+            report.append(f"| `integrand_vs_t_{name}.png` | Integrand $f(t)$ vs $t$ for {name} |")
+            report.append(f"| `window_capacity_vs_T_{name}.png` | Window capacity $C_{{win}}(T)$ for {name} |")
     report.append("| `capacity_vs_tmax_all_scenarios.png` | All scenarios on one plot |")
     if heatmap_result is not None:
         report.append("| `heatmap_log10C_gamma_n_gamma_P.png` | Heatmap of $\\log_{10}(C)$ in exponent space |")
@@ -193,9 +196,13 @@ def generate_report(convergence_results: dict[str, ConvergenceResult],
     report.append("## Key Findings")
     report.append("")
 
-    # Identify terminal vs nonterminal
-    terminal = [name for name, r in convergence_results.items() if r.final_capacity < 1e-10]
-    nonterminal = [name for name, r in convergence_results.items() if r.final_capacity >= 1e-10]
+    # Identify terminal vs nonterminal using windowed capacity status
+    if scenario_diagnostics:
+        terminal = [name for name, diag in scenario_diagnostics.items() if diag.status == "Terminal"]
+        nonterminal = [name for name, diag in scenario_diagnostics.items() if diag.status == "Nonterminal"]
+    else:
+        terminal = [name for name, r in convergence_results.items() if r.final_capacity < 1e-10]
+        nonterminal = [name for name, r in convergence_results.items() if r.final_capacity >= 1e-10]
 
     if terminal:
         report.append(f"**Terminal scenarios** ($C \\to 0$): {', '.join(terminal)}")
@@ -222,6 +229,7 @@ def generate_report(convergence_results: dict[str, ConvergenceResult],
 def save_results_json(convergence_results: dict[str, ConvergenceResult],
                       heatmap_result: Optional[HeatmapResult],
                       epsilon_results: Optional[list[EpsilonSweepResult]],
+                      scenario_diagnostics: Optional[dict[str, ScenarioDiagnostics]],
                       params: TSEParameters,
                       outdir: Path) -> dict:
     """Save all numerical results to JSON.
@@ -252,15 +260,38 @@ def save_results_json(convergence_results: dict[str, ConvergenceResult],
     }
 
     for name, result in convergence_results.items():
+        if name in SCENARIOS:
+            gamma_n = SCENARIOS[name]["gamma_n"]
+            gamma_P = SCENARIOS[name]["gamma_P"]
+            gamma_sv = SCENARIOS[name]["gamma_sv"]
+        elif scenario_diagnostics and name in scenario_diagnostics:
+            gamma_n = scenario_diagnostics[name].params.gamma_n
+            gamma_P = scenario_diagnostics[name].params.gamma_P
+            gamma_sv = scenario_diagnostics[name].params.gamma_sv
+        else:
+            gamma_n = gamma_P = gamma_sv = None
+
         results["scenarios"][name] = {
-            "gamma_n": SCENARIOS[name]["gamma_n"],
-            "gamma_P": SCENARIOS[name]["gamma_P"],
-            "gamma_sv": SCENARIOS[name]["gamma_sv"],
+            "gamma_n": gamma_n,
+            "gamma_P": gamma_P,
+            "gamma_sv": gamma_sv,
             "t_max_values": result.t_max_values.tolist(),
             "capacity_values": result.capacity_values.tolist(),
             "final_capacity": float(result.final_capacity),
             "converged": bool(result.converged),
         }
+
+        if scenario_diagnostics and name in scenario_diagnostics:
+            diag = scenario_diagnostics[name]
+            results["scenarios"][name].update({
+                "capacity_total": diag.capacity_total,
+                "window_T_values": diag.window_T_values.tolist(),
+                "capacity_window_values": diag.capacity_window_values.tolist(),
+                "capacity_window_last_median": diag.capacity_window_last_median,
+                "status": diag.status,
+            })
+            if diag.capacity_tail_values is not None:
+                results["scenarios"][name]["capacity_tail_values"] = diag.capacity_tail_values.tolist()
 
     if heatmap_result is not None:
         results["heatmap"] = {

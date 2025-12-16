@@ -75,6 +75,94 @@ def trapezoid_log_grid(y: NDArray[np.float64], t: NDArray[np.float64]) -> float:
     return np.sum(y_avg * dt)
 
 
+def compute_capacity_total(ts: NDArray[np.float64],
+                           f: NDArray[np.float64]) -> float:
+    """Compute total capacity using trapezoidal integration on linear ``t``.
+
+    Args:
+        ts: Time samples (monotonically increasing)
+        f: Integrand samples corresponding to ``ts``
+
+    Returns:
+        Total capacity ``C``.
+    """
+    return float(np.trapezoid(f, ts))
+
+
+def compute_capacity_tail(ts: NDArray[np.float64],
+                          f: NDArray[np.float64],
+                          T: float) -> float:
+    """Compute tail capacity from ``T`` to ``t_max`` using trapezoid rule.
+
+    Args:
+        ts: Time samples (monotonic, linear domain)
+        f: Integrand samples
+        T: Lower limit for the tail integral
+
+    Returns:
+        Tail capacity ``C_tail(T)``.
+    """
+    mask = ts >= T
+    if not np.any(mask):
+        return 0.0
+    return float(np.trapezoid(f[mask], ts[mask]))
+
+
+def compute_capacity_window(ts: NDArray[np.float64],
+                            f: NDArray[np.float64],
+                            T: float) -> float:
+    """Compute windowed capacity over ``[T, 2T]``.
+
+    Returns ``np.nan`` if the window exceeds the sampled range or
+    has insufficient samples.
+
+    Args:
+        ts: Time samples (monotonic)
+        f: Integrand samples
+        T: Window start
+
+    Returns:
+        Window capacity ``C_win(T)`` or ``np.nan`` if invalid.
+    """
+    upper = 2.0 * T
+    if upper > ts.max():
+        return float('nan')
+
+    mask = (ts >= T) & (ts <= upper)
+    if np.count_nonzero(mask) < 2:
+        return float('nan')
+
+    return float(np.trapezoid(f[mask], ts[mask]))
+
+
+def compute_capacity_windows(ts: NDArray[np.float64],
+                             f: NDArray[np.float64],
+                             T_values: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Compute windowed capacities for a sequence of ``T`` values."""
+    capacities = np.empty_like(T_values, dtype=float)
+    for i, T in enumerate(T_values):
+        capacities[i] = compute_capacity_window(ts, f, float(T))
+    return capacities
+
+
+def select_T_values(tmin: float, tmax: float, nT: int, factor: float = 2.0) -> NDArray[np.float64]:
+    """Select log-spaced ``T`` values such that ``factor*T <= tmax``.
+
+    Args:
+        tmin: Minimum time value
+        tmax: Maximum time value
+        nT: Number of ``T`` samples
+        factor: Window factor (default 2.0)
+
+    Returns:
+        Array of log-spaced ``T`` values within the valid range.
+    """
+    upper = tmax / factor
+    if upper <= tmin:
+        return np.array([], dtype=float)
+    return np.logspace(np.log10(tmin), np.log10(upper), nT)
+
+
 def compute_capacity(params: TSEParameters,
                      use_log_space: bool = False) -> IntegrationResult:
     """Compute the Operational Capacity for given parameters.

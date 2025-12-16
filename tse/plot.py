@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
 from .experiments import ConvergenceResult, HeatmapResult, EpsilonSweepResult
+from .experiments import ScenarioDiagnostics
 
 
 def setup_style() -> None:
@@ -242,6 +243,49 @@ def plot_epsilon_sweep(results: list[EpsilonSweepResult],
             fig_ind.savefig(outdir / f"capacity_vs_eps_{result.scenario_name}.png",
                            bbox_inches='tight')
             plt.close(fig_ind)
+
+    if show:
+        plt.show()
+
+    return fig
+
+
+def plot_integrand_vs_t(diag: ScenarioDiagnostics,
+                        outdir: Path,
+                        show: bool = False) -> Figure:
+    """Plot integrand f(t) vs t on log-log axes."""
+    setup_style()
+
+    fig, ax = plt.subplots()
+    ax.loglog(diag.integration.t_grid, diag.integration.integrand_values)
+    ax.set_xlabel("t")
+    ax.set_ylabel("f(t)")
+    ax.set_title(f"Integrand vs t: {diag.scenario_name}")
+
+    plt.tight_layout()
+    fig.savefig(outdir / f"integrand_vs_t_{diag.scenario_name}.png", bbox_inches='tight')
+
+    if show:
+        plt.show()
+
+    return fig
+
+
+def plot_window_capacity(diag: ScenarioDiagnostics,
+                         outdir: Path,
+                         show: bool = False) -> Figure:
+    """Plot windowed capacity C_win(T) vs T on log-log axes."""
+    setup_style()
+
+    fig, ax = plt.subplots()
+    mask = ~np.isnan(diag.capacity_window_values)
+    ax.loglog(diag.window_T_values[mask], diag.capacity_window_values[mask], 'o-')
+    ax.set_xlabel("T")
+    ax.set_ylabel(r"$C_{win}(T)$")
+    ax.set_title(f"Window Capacity: {diag.scenario_name}")
+
+    plt.tight_layout()
+    fig.savefig(outdir / f"window_capacity_vs_T_{diag.scenario_name}.png", bbox_inches='tight')
 
     if show:
         plt.show()
