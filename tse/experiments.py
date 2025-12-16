@@ -18,9 +18,13 @@ from numpy.typing import NDArray
 from .model import TSEParameters, SCENARIOS, get_scenario_params, integrand
 from .integrate import (
     compute_capacity,
+    compute_capacity_total,
+    compute_capacity_tail,
+    compute_capacity_windows,
     compute_capacity_quick,
     convergence_study,
     make_log_grid,
+    select_T_values,
     trapezoid_log_grid,
     IntegrationResult,
 )
@@ -55,6 +59,21 @@ class EpsilonSweepResult:
     capacity_values: NDArray[np.float64]
 
 
+@dataclass
+class ScenarioDiagnostics:
+    """Late-time diagnostics for a scenario."""
+
+    scenario_name: str
+    params: TSEParameters
+    integration: IntegrationResult
+    capacity_total: float
+    window_T_values: NDArray[np.float64]
+    capacity_window_values: NDArray[np.float64]
+    capacity_window_last_median: float
+    status: str
+    capacity_tail_values: Optional[NDArray[np.float64]] = None
+
+
 def run_tmax_convergence(scenario_name: str,
                          base_params: Optional[TSEParameters] = None,
                          t_max_values: Optional[list[float]] = None,
@@ -73,7 +92,12 @@ def run_tmax_convergence(scenario_name: str,
     if t_max_values is None:
         t_max_values = [1e3, 1e4, 1e5, 1e6, 1e7, 1e8]
 
-    params = get_scenario_params(scenario_name, base_params)
+    if scenario_name in SCENARIOS:
+        params = get_scenario_params(scenario_name, base_params)
+    elif base_params is not None:
+        params = base_params
+    else:
+        raise ValueError("Unknown scenario and no base parameters provided")
     t_max_arr, capacity_arr = convergence_study(params, t_max_values, n_steps)
 
     # Check if converged: last two values should be within 5%
@@ -240,19 +264,80 @@ def run_epsilon_sweep(scenario_name: str,
     )
 
 
+def compute_scenario_diagnostics(
+    scenario_name: str,
+    base_params: Optional[TSEParameters] = None,
+    *,
+    nT: int = 40,
+    K_last: int = 5,
+    C_ZERO_WIN: float = 1e-12,
+    include_tail: bool = True,
+) -> ScenarioDiagnostics:
+    """Compute late-time diagnostics for a scenario."""
+
+    params = get_scenario_params(scenario_name, base_params)
+    integration = compute_capacity(params)
+    ts = integration.t_grid
+    f_vals = integration.integrand_values
+
+    T_values = select_T_values(params.t_min, params.t_max, nT, factor=2.0)
+    capacity_window_values = compute_capacity_windows(ts, f_vals, T_values)
+
+    valid_indices = np.where(~np.isnan(capacity_window_values))[0]
+    if valid_indices.size == 0:
+        window_last_median = float('nan')
+    else:
+        last_indices = valid_indices[-K_last:]
+        window_last_median = float(np.median(capacity_window_values[last_indices]))
+
+    status = "Nonterminal" if window_last_median >= C_ZERO_WIN else "Terminal"
+
+    capacity_tail_values = None
+    if include_tail:
+        capacity_tail_values = np.array(
+            [compute_capacity_tail(ts, f_vals, float(T)) for T in T_values]
+        )
+
+    capacity_total = compute_capacity_total(ts, f_vals)
+
+    return ScenarioDiagnostics(
+        scenario_name=scenario_name,
+        params=params,
+        integration=integration,
+        capacity_total=capacity_total,
+        window_T_values=T_values,
+        capacity_window_values=capacity_window_values,
+        capacity_window_last_median=window_last_median,
+        status=status,
+        capacity_tail_values=capacity_tail_values,
+    )
+
+
 def run_single_scenario(scenario_name: str,
-                        base_params: Optional[TSEParameters] = None) -> IntegrationResult:
-    """Run a single scenario and return full result.
+                        base_params: Optional[TSEParameters] = None,
+                        *,
+                        nT: int = 40,
+                        K_last: int = 5,
+                        C_ZERO_WIN: float = 1e-12) -> ScenarioDiagnostics:
+    """Run a single scenario and return full diagnostics.
 
     Args:
         scenario_name: Scenario to run
         base_params: Optional base parameters
+        nT: Number of window evaluation points
+        K_last: Number of trailing windows to use for the median
+        C_ZERO_WIN: Threshold for nonterminal classification
 
     Returns:
-        IntegrationResult with full diagnostics
+        ScenarioDiagnostics with full diagnostics
     """
-    params = get_scenario_params(scenario_name, base_params)
-    return compute_capacity(params)
+    return compute_scenario_diagnostics(
+        scenario_name,
+        base_params,
+        nT=nT,
+        K_last=K_last,
+        C_ZERO_WIN=C_ZERO_WIN,
+    )
 
 
 def find_boundary_exponent_sum(params: TSEParameters) -> float:

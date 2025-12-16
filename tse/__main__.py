@@ -18,6 +18,8 @@ from .experiments import (
     run_all_tmax_convergence,
     run_exponent_heatmap,
     run_epsilon_sweep,
+    compute_scenario_diagnostics,
+    ConvergenceResult,
 )
 from .plot import (
     plot_tmax_convergence,
@@ -25,6 +27,8 @@ from .plot import (
     plot_heatmap,
     plot_epsilon_sweep,
     create_summary_figure,
+    plot_integrand_vs_t,
+    plot_window_capacity,
 )
 from .report import generate_report, save_results_json
 
@@ -78,6 +82,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--heatmap-nsteps", type=int, default=2000,
                         help="Integration steps for heatmap (reduced for speed)")
 
+    # Late-time window diagnostics
+    parser.add_argument("--nT", type=int, default=40,
+                        help="Number of log-spaced T values for window capacity")
+    parser.add_argument("--K_last", type=int, default=5,
+                        help="Number of trailing windows to average/median for status")
+    parser.add_argument("--C_ZERO_WIN", type=float, default=1e-12,
+                        help="Threshold for classifying Nonterminal via window capacity")
+
     # Output
     parser.add_argument("--outdir", type=str, default="outputs",
                         help="Output directory for plots and results")
@@ -124,17 +136,40 @@ def run_single(args: argparse.Namespace) -> None:
         print(f"  gamma_n={params.gamma_n}, gamma_P={params.gamma_P}, gamma_sv={params.gamma_sv}")
         print(f"  eps={params.eps}, t_max={params.t_max:.0e}, n_steps={params.n_steps}")
 
-    result = compute_capacity(params)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    diag = compute_scenario_diagnostics(
+        scenario_name,
+        params,
+        nT=args.nT,
+        K_last=args.K_last,
+        C_ZERO_WIN=args.C_ZERO_WIN,
+    )
 
     print(f"\nResult:")
-    print(f"  Operational Capacity C = {result.capacity:.6e}")
-    print(f"  Converged: {result.converged}")
-    print(f"  Relative tail contribution: {result.relative_tail:.2%}")
+    print(f"  Operational Capacity C_total = {diag.capacity_total:.6e}")
+    print(f"  Window median (last {args.K_last}) = {diag.capacity_window_last_median:.3e}")
+    print(f"  Status: {diag.status}")
 
-    if result.capacity < 1e-12:
-        print("  Classification: TERMINAL (C -> 0)")
-    else:
-        print("  Classification: NONTERMINAL (C > 0)")
+    plot_integrand_vs_t(diag, outdir, show=args.show)
+    plot_window_capacity(diag, outdir, show=args.show)
+
+    convergence_results = {
+        scenario_name: ConvergenceResult(
+            scenario_name=scenario_name,
+            t_max_values=np.array([params.t_max]),
+            capacity_values=np.array([diag.capacity_total]),
+            converged=diag.integration.converged,
+            final_capacity=diag.capacity_total,
+        )
+    }
+
+    generate_report(convergence_results, None, None, {scenario_name: diag}, params, outdir)
+    save_results_json(convergence_results, None, None, {scenario_name: diag}, params, outdir)
+
+    if not args.quiet:
+        print(f"Outputs written to {outdir}")
 
 
 def run_sweep(args: argparse.Namespace) -> None:
@@ -155,6 +190,22 @@ def run_sweep(args: argparse.Namespace) -> None:
 
     start_time = time.time()
 
+    # Late-time diagnostics for each scenario at the base parameters
+    scenario_diagnostics = {
+        name: compute_scenario_diagnostics(
+            name,
+            base_params,
+            nT=args.nT,
+            K_last=args.K_last,
+            C_ZERO_WIN=args.C_ZERO_WIN,
+        )
+        for name in SCENARIOS
+    }
+
+    for diag in scenario_diagnostics.values():
+        plot_integrand_vs_t(diag, outdir, show=False)
+        plot_window_capacity(diag, outdir, show=False)
+
     # 1. Run t_max convergence for all scenarios
     if not args.quiet:
         print("=" * 60)
@@ -171,8 +222,8 @@ def run_sweep(args: argparse.Namespace) -> None:
     print("\nScenario Results:")
     print("-" * 50)
     for name, result in convergence_results.items():
-        status = "TERMINAL" if result.final_capacity < 1e-10 else "NONTERMINAL"
-        print(f"  {name:35s}: C = {result.final_capacity:.3e}  [{status}]")
+        diag_status = scenario_diagnostics[name].status
+        print(f"  {name:35s}: C = {result.final_capacity:.3e}  [{diag_status}]")
 
     # Plot convergence curves
     for name, result in convergence_results.items():
@@ -224,8 +275,8 @@ def run_sweep(args: argparse.Namespace) -> None:
         print("Generating report...")
         print("=" * 60)
 
-    generate_report(convergence_results, heatmap_result, epsilon_results, base_params, outdir)
-    save_results_json(convergence_results, heatmap_result, epsilon_results, base_params, outdir)
+    generate_report(convergence_results, heatmap_result, epsilon_results, scenario_diagnostics, base_params, outdir)
+    save_results_json(convergence_results, heatmap_result, epsilon_results, scenario_diagnostics, base_params, outdir)
 
     elapsed = time.time() - start_time
 
@@ -239,8 +290,8 @@ def run_sweep(args: argparse.Namespace) -> None:
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    terminal = [n for n, r in convergence_results.items() if r.final_capacity < 1e-10]
-    nonterminal = [n for n, r in convergence_results.items() if r.final_capacity >= 1e-10]
+    terminal = [n for n, d in scenario_diagnostics.items() if d.status == "Terminal"]
+    nonterminal = [n for n, d in scenario_diagnostics.items() if d.status == "Nonterminal"]
 
     print(f"Terminal scenarios (C -> 0):     {', '.join(terminal) if terminal else 'None'}")
     print(f"Nonterminal scenarios (C > 0):   {', '.join(nonterminal) if nonterminal else 'None'}")

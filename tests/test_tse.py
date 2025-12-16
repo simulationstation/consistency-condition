@@ -34,6 +34,7 @@ from tse.integrate import (
 from tse.experiments import (
     run_tmax_convergence,
     run_single_scenario,
+    compute_scenario_diagnostics,
 )
 
 
@@ -248,8 +249,8 @@ class TestExperiments:
         result = run_single_scenario("mild_dilution", TSEParameters(
             t_max=1e4, n_steps=1000
         ))
-        assert result.capacity > 0
-        assert len(result.t_grid) == 1000
+        assert result.capacity_total > 0
+        assert len(result.integration.t_grid) == 1000
 
     def test_tmax_convergence_returns_all_values(self):
         """Test t_max convergence returns values for all t_max."""
@@ -261,6 +262,28 @@ class TestExperiments:
         assert len(result.t_max_values) == 3
         assert len(result.capacity_values) == 3
         assert result.scenario_name == "mild_dilution"
+
+    def test_window_capacity_classification(self):
+        """Strong dilution should have vanishing window capacity at late times."""
+        params = TSEParameters(t_max=1e6, n_steps=1500)
+        diag = compute_scenario_diagnostics(
+            "strong_dilution", params, nT=20, K_last=5, C_ZERO_WIN=1e-12
+        )
+
+        valid = diag.capacity_window_values[~np.isnan(diag.capacity_window_values)]
+        assert np.all(np.diff(valid) <= 0), "Window capacities should decay with T"
+        assert diag.capacity_window_last_median < 1e-12
+        assert diag.status == "Terminal"
+
+    def test_persistent_power_nonterminal_window(self):
+        """Persistent power should remain nonterminal via window capacity."""
+        params = TSEParameters(t_max=1e6, n_steps=1500)
+        diag = compute_scenario_diagnostics(
+            "persistent_power_nonterminal", params, nT=20, K_last=5, C_ZERO_WIN=1e-12
+        )
+
+        assert diag.capacity_window_last_median > 1e-10
+        assert diag.status == "Nonterminal"
 
 
 class TestNumericalStability:
