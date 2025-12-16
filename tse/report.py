@@ -330,10 +330,14 @@ def generate_family_report(results: list[FamilyDiagnostics], outdir: Path) -> st
     report: list[str] = []
     report.append("# Late-Time Activity Families")
     report.append("")
-    report.append("Lemma: If $f(t)\\to 0$ then $C_{win}(T)\\to 0$; persistence requires violating that assumption (e.g., constant plateaus or nondecaying pulses).")
+    report.append(
+        "Terminality is assessed along two axes: (1) instantaneous tail activity ``f(t)`` "
+        "(median over the last samples) and (2) windowed capacity $C_{win}(T)$ over late-time "
+        "windows."
+    )
     report.append("")
-    report.append("| Family | Params | $C_{win}$ last median | Slope $b$ | Status | $f(t_{max})/f(t_{min})$ | Plots |")
-    report.append("|--------|--------|-----------------------|-----------|--------|-------------------------|-------|")
+    report.append("| Family | Params | $f$ tail median | Instantaneous | $C_{win}$ last median | Slope $b$ | Window status | Combined | $f(t_{max})/f(t_{min})$ | Plots |")
+    report.append("|--------|--------|-----------------|----------------|-----------------------|-----------|---------------|----------|-------------------------|-------|")
 
     for diag in results:
         param_str = ", ".join([f"{k}={v}" for k, v in diag.params.items()])
@@ -341,9 +345,12 @@ def generate_family_report(results: list[FamilyDiagnostics], outdir: Path) -> st
             "| "
             f"{diag.family} | "
             f"{param_str} | "
+            f"{diag.f_tail_median_lastM:.3e} | "
+            f"{diag.instantaneous_status} | "
             f"{diag.C_win_last_median:.3e} | "
             f"{diag.slope.b:.3f} | "
-            f"{diag.status} | "
+            f"{diag.window_status} | "
+            f"{diag.combined_status} | "
             f"{diag.f_tail_ratio:.3e} | "
             f"`family_integrand_vs_t_{diag.family}.png`, `family_window_capacity_vs_T_{diag.family}.png` |")
 

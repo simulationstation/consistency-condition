@@ -428,12 +428,20 @@ def create_summary_figure(convergence_results: dict[str, ConvergenceResult],
 
 def plot_family_integrand(diag: FamilyDiagnostics,
                           outdir: Optional[Path] = None,
-                          show: bool = False) -> Figure:
+                          show: bool = False,
+                          *,
+                          tail_window: Optional[int] = None) -> Figure:
     """Plot f(t) vs t for a family on log-log axes."""
 
     setup_style()
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.loglog(diag.ts, diag.f_values + 1e-30, label=diag.family)
+
+    if tail_window:
+        tail_window = max(1, tail_window)
+        tail_ts = diag.ts[-tail_window:]
+        tail_f = diag.f_values[-tail_window:] + 1e-30
+        ax.scatter(tail_ts, tail_f, color="#C73E1D", s=18, label=f"Tail last {len(tail_ts)}")
     ax.set_xlabel("t")
     ax.set_ylabel("f(t)")
     ax.set_title(f"Integrand for {diag.family}")
@@ -501,8 +509,13 @@ def plot_family_status_overview(results: list[FamilyDiagnostics],
     setup_style()
     fig, ax = plt.subplots(figsize=(8, 4))
     families = [r.family for r in results]
-    statuses = [r.status for r in results]
-    colors = {"Persistent": "#2E86AB", "LongTailTerminal": "#C73E1D", "Terminal": "#555555"}
+    statuses = [r.combined_status for r in results]
+    colors = {
+        "Persistent": "#2E86AB",
+        "WindowPersistent_InstantaneousTerminal": "#8E44AD",
+        "LongTailTerminal": "#C73E1D",
+        "Terminal": "#555555",
+    }
     bar_colors = [colors.get(s, "#888888") for s in statuses]
 
     ax.bar(range(len(families)), [1] * len(families), color=bar_colors)
