@@ -36,13 +36,25 @@ def compute_window_capacity(ts: NDArray[np.float64],
 
 
 def tail_median(values: NDArray[np.float64], K_last: int) -> float:
-    """Compute the median of the last ``K_last`` finite values."""
+    """Compute the median of the last ``K_last`` finite values.
+
+    Returns ``np.nan`` if fewer than ``K_last`` finite values are available.
+    """
+
+    if K_last <= 0:
+        return float("nan")
 
     finite_vals = values[np.isfinite(values)]
-    if finite_vals.size == 0:
+    if finite_vals.size < K_last:
         return float("nan")
-    tail = finite_vals[-K_last:] if finite_vals.size >= K_last else finite_vals
+    tail = finite_vals[-K_last:]
     return float(np.median(tail))
+
+
+def tail_median_f(values: NDArray[np.float64], M_last: int) -> float:
+    """Median of the last ``M_last`` finite instantaneous values."""
+
+    return tail_median(values, M_last)
 
 
 def fit_tail_slope(T_values: NDArray[np.float64],

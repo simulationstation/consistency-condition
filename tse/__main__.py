@@ -99,6 +99,10 @@ def parse_args() -> argparse.Namespace:
                         help="Threshold for classifying Nonterminal via window capacity")
     parser.add_argument("--B_MIN_PERSIST", type=float, default=0.1,
                         help="Minimum slope magnitude for persistence (less negative than this is Persistent)")
+    parser.add_argument("--F_ZERO", type=float, default=2e-2,
+                        help="Threshold for instantaneous terminality based on tail median of f")
+    parser.add_argument("--M_tail", type=int, default=200,
+                        help="Number of tail samples of f(t) to median for instantaneous status (capped internally)")
 
     # Family suite
     parser.add_argument("--family_suite", action="store_true",
@@ -139,6 +143,8 @@ def run_family(args: argparse.Namespace) -> None:
         K_slope=args.K_slope,
         C_ZERO_WIN=args.C_ZERO_WIN,
         B_MIN_PERSIST=args.B_MIN_PERSIST,
+        F_ZERO=args.F_ZERO,
+        M_tail=args.M_tail,
         outdir=outdir,
         family=args.family,
         family_params=params_override,
@@ -146,7 +152,8 @@ def run_family(args: argparse.Namespace) -> None:
     )
 
     for diag in results:
-        plot_family_integrand(diag, outdir, show=args.show)
+        tail_window = max(1, min(args.M_tail, max(1, int(len(diag.ts) // 10))))
+        plot_family_integrand(diag, outdir, show=args.show, tail_window=tail_window)
         plot_family_window_capacity(diag, outdir, K_slope=args.K_slope, show=args.show)
 
     plot_family_status_overview(results, outdir, show=args.show)
