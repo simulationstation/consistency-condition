@@ -5,6 +5,7 @@ Run with: python -m tse [options]
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 import time
@@ -29,8 +30,13 @@ from .plot import (
     create_summary_figure,
     plot_integrand_vs_t,
     plot_window_capacity,
+    plot_family_integrand,
+    plot_family_window_capacity,
+    plot_family_status_overview,
 )
-from .report import generate_report, save_results_json
+from .report import generate_report, save_results_json, generate_family_report
+from .experiments_families import run_family_suite
+from .families import get_family_names
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,8 +93,23 @@ def parse_args() -> argparse.Namespace:
                         help="Number of log-spaced T values for window capacity")
     parser.add_argument("--K_last", type=int, default=5,
                         help="Number of trailing windows to average/median for status")
+    parser.add_argument("--K_slope", type=int, default=5,
+                        help="Number of trailing windows to use for slope fit")
     parser.add_argument("--C_ZERO_WIN", type=float, default=1e-12,
                         help="Threshold for classifying Nonterminal via window capacity")
+    parser.add_argument("--B_MIN_PERSIST", type=float, default=0.1,
+                        help="Minimum slope magnitude for persistence (less negative than this is Persistent)")
+
+    # Family suite
+    parser.add_argument("--family_suite", action="store_true",
+                        help="Run direct-activity family experiments")
+    parser.add_argument("--family", type=str, default=None,
+                        choices=get_family_names(),
+                        help="Optional single family to run")
+    parser.add_argument("--family_params", type=str, default=None,
+                        help="JSON string of parameter overrides for the selected family")
+    parser.add_argument("--nT_family", type=int, default=50,
+                        help="Number of T samples for family suite")
 
     # Output
     parser.add_argument("--outdir", type=str, default="outputs",
@@ -99,6 +120,40 @@ def parse_args() -> argparse.Namespace:
                         help="Suppress progress output")
 
     return parser.parse_args()
+
+
+def run_family(args: argparse.Namespace) -> None:
+    """Run the family suite of direct activity experiments."""
+
+    outdir = Path(args.outdir)
+    params_override = None
+    if args.family_params:
+        params_override = json.loads(args.family_params)
+
+    results = run_family_suite(
+        tmin=args.tmin,
+        tmax=args.tmax,
+        nsteps=args.nsteps,
+        nT=args.nT_family,
+        K_last=args.K_last,
+        K_slope=args.K_slope,
+        C_ZERO_WIN=args.C_ZERO_WIN,
+        B_MIN_PERSIST=args.B_MIN_PERSIST,
+        outdir=outdir,
+        family=args.family,
+        family_params=params_override,
+        quiet=args.quiet,
+    )
+
+    for diag in results:
+        plot_family_integrand(diag, outdir, show=args.show)
+        plot_family_window_capacity(diag, outdir, K_slope=args.K_slope, show=args.show)
+
+    plot_family_status_overview(results, outdir, show=args.show)
+    generate_family_report(results, outdir)
+
+    if not args.quiet:
+        print(f"Family suite results saved to: {outdir}")
 
 
 def run_single(args: argparse.Namespace) -> None:
@@ -310,7 +365,9 @@ def main() -> None:
     args = parse_args()
 
     try:
-        if args.sweep:
+        if args.family_suite:
+            run_family(args)
+        elif args.sweep:
             run_sweep(args)
         else:
             run_single(args)
