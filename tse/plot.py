@@ -16,6 +16,7 @@ from matplotlib.axes import Axes
 
 from .experiments import ConvergenceResult, HeatmapResult, EpsilonSweepResult
 from .experiments import ScenarioDiagnostics
+from .experiments_families import FamilyDiagnostics
 
 
 def setup_style() -> None:
@@ -413,6 +414,111 @@ def create_summary_figure(convergence_results: dict[str, ConvergenceResult],
 
     if outdir is not None:
         fig.savefig(outdir / "summary_figure.png", bbox_inches='tight')
+
+    if show:
+        plt.show()
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Family plots
+# ---------------------------------------------------------------------------
+
+
+def plot_family_integrand(diag: FamilyDiagnostics,
+                          outdir: Optional[Path] = None,
+                          show: bool = False) -> Figure:
+    """Plot f(t) vs t for a family on log-log axes."""
+
+    setup_style()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.loglog(diag.ts, diag.f_values + 1e-30, label=diag.family)
+    ax.set_xlabel("t")
+    ax.set_ylabel("f(t)")
+    ax.set_title(f"Integrand for {diag.family}")
+    ax.legend()
+    ax.grid(True, which="both", alpha=0.3)
+    plt.tight_layout()
+
+    if outdir is not None:
+        fig.savefig(outdir / f"family_integrand_vs_t_{diag.family}.png", bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    return fig
+
+
+def plot_family_window_capacity(diag: FamilyDiagnostics,
+                                outdir: Optional[Path] = None,
+                                *,
+                                K_slope: int,
+                                show: bool = False) -> Figure:
+    """Plot C_win(T) vs T with tail slope overlay."""
+
+    setup_style()
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.loglog(diag.T_values, diag.C_window, "o-", label="C_win")
+
+    mask = np.isfinite(diag.T_values) & np.isfinite(diag.C_window) & (diag.T_values > 0) & (diag.C_window > 0)
+    T_valid = diag.T_values[mask]
+    C_valid = diag.C_window[mask]
+    if T_valid.size:
+        tail_T = T_valid[-K_slope:] if T_valid.size >= K_slope else T_valid
+        tail_C = C_valid[-len(tail_T):]
+        ax.scatter(tail_T, tail_C, color="red", label=f"Tail (last {len(tail_T)})")
+
+        if diag.slope.valid and len(tail_T) >= 2:
+            x = np.log10(tail_T)
+            y = np.log10(tail_C)
+            intercept = y[0] - diag.slope.b * x[0]
+            x_line = np.array([x.min(), x.max()])
+            y_line = intercept + diag.slope.b * x_line
+            ax.plot(10 ** x_line, 10 ** y_line, "--", color="gray", label=f"Slope b={diag.slope.b:.2f}")
+
+    ax.set_xlabel("T")
+    ax.set_ylabel(r"$C_{win}(T)$")
+    ax.set_title(f"Window capacity for {diag.family}")
+    ax.legend()
+    ax.grid(True, which="both", alpha=0.3)
+    plt.tight_layout()
+
+    if outdir is not None:
+        fig.savefig(outdir / f"family_window_capacity_vs_T_{diag.family}.png", bbox_inches="tight")
+
+    if show:
+        plt.show()
+
+    return fig
+
+
+def plot_family_status_overview(results: list[FamilyDiagnostics],
+                                outdir: Optional[Path] = None,
+                                show: bool = False) -> Figure:
+    """Create a simple bar plot summarizing family classifications."""
+
+    setup_style()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    families = [r.family for r in results]
+    statuses = [r.status for r in results]
+    colors = {"Persistent": "#2E86AB", "LongTailTerminal": "#C73E1D", "Terminal": "#555555"}
+    bar_colors = [colors.get(s, "#888888") for s in statuses]
+
+    ax.bar(range(len(families)), [1] * len(families), color=bar_colors)
+    ax.set_xticks(range(len(families)))
+    ax.set_xticklabels(families, rotation=45, ha="right")
+    ax.set_ylim(0, 1.2)
+    ax.set_yticks([])
+    ax.set_title("Family classification overview")
+
+    for i, status in enumerate(statuses):
+        ax.text(i, 0.6, status, ha="center", va="center", color="white", fontweight="bold")
+
+    plt.tight_layout()
+
+    if outdir is not None:
+        fig.savefig(outdir / "family_suite_status_overview.png", bbox_inches="tight")
 
     if show:
         plt.show()

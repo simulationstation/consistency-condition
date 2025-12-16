@@ -17,6 +17,7 @@ from .experiments import (
     EpsilonSweepResult,
     ScenarioDiagnostics,
 )
+from .experiments_families import FamilyDiagnostics
 
 
 def generate_report(convergence_results: dict[str, ConvergenceResult],
@@ -321,3 +322,35 @@ def save_results_json(convergence_results: dict[str, ConvergenceResult],
         json.dump(results, f, indent=2)
 
     return results
+
+
+def generate_family_report(results: list[FamilyDiagnostics], outdir: Path) -> str:
+    """Generate markdown report for the family suite."""
+
+    report: list[str] = []
+    report.append("# Late-Time Activity Families")
+    report.append("")
+    report.append("Lemma: If $f(t)\\to 0$ then $C_{win}(T)\\to 0$; persistence requires violating that assumption (e.g., constant plateaus or nondecaying pulses).")
+    report.append("")
+    report.append("| Family | Params | $C_{win}$ last median | Slope $b$ | Status | $f(t_{max})/f(t_{min})$ | Plots |")
+    report.append("|--------|--------|-----------------------|-----------|--------|-------------------------|-------|")
+
+    for diag in results:
+        param_str = ", ".join([f"{k}={v}" for k, v in diag.params.items()])
+        report.append(
+            "| "
+            f"{diag.family} | "
+            f"{param_str} | "
+            f"{diag.C_win_last_median:.3e} | "
+            f"{diag.slope.b:.3f} | "
+            f"{diag.status} | "
+            f"{diag.f_tail_ratio:.3e} | "
+            f"`family_integrand_vs_t_{diag.family}.png`, `family_window_capacity_vs_T_{diag.family}.png` |")
+
+    report.append("")
+    report.append("Overall status plot: `family_suite_status_overview.png`.")
+
+    content = "\n".join(report)
+    out_path = outdir / "report_families.md"
+    out_path.write_text(content)
+    return content
